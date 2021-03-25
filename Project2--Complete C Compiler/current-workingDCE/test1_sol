@@ -1,0 +1,36 @@
+; Register allocation
+;
+;  R13   ->   R0 
+;  R14   ->   R1 
+;  R15   ->   R0 
+;  R16   ->   R2 
+;  R17   ->   R1 
+;  R18   ->   R0 
+;  R19   ->   R1 
+;  R20   ->   R0 
+;  R25   ->   R0 
+;  R26   ->   R0 
+;
+; Final code
+main:		ADD R6, R6, #-1
+		STR R7, R6, #0
+		SET R0, #1
+		STR R0, R5, #0
+		LDR R1, R5, #0
+		SET R0, #7
+		ADD R2, R1, R0
+		STR R2, R5, #1
+		SET R2, #1
+		LDR R1, R5, #0
+		SET R0, #1
+		ADD R1, R1, R0
+		ADD R0, R5, #2
+		STR R2, R0, R1
+		ADD R0, R5, #6
+		STR R0, R5, #5
+		LDR R7, R6, #0
+		ADD R6, R6, #1
+		SET R0, #0
+		ADD R6, R6, #-1
+		STR R0, R6, #0
+		RET

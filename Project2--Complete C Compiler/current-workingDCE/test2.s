@@ -1,0 +1,10 @@
+main:	NOP
+	SET R11,#1
+	BRa lbl
+lbl:	NOP
+	SET R12,#2
+	ADD R13,R11,R12
+lbl2:   NOP
+	MUL R14,R11, R13
+	STR R14,R5,#1
+	RET

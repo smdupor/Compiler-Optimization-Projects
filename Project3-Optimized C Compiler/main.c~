@@ -1,0 +1,556 @@
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+#include "s3inst.h"
+
+#define TRUE 1
+#define FALSE 0
+
+#define vbmode if(verbose)
+#define LIST_ADD(a,b) ((a)->next = (b)); ((b) = (a));
+
+/* given globals */
+extern int verbose;
+extern int num_errors;
+char *infile;
+extern int yyerror();
+extern int yywrap();
+extern int yyparse();
+extern void print_inst(inst_t);
+extern void print_list(inst_t);
+
+inst_t instList; /* list of instructions found by parser */
+
+/* my globals */
+
+/* structs and the like */
+struct reg_set{
+    int reg;        /* the number of the register */
+    struct reg_set *next;  /* the next register in the list */
+};
+typedef struct reg_set regset;
+
+struct instruction {
+	int    num;  /* unique id         */
+    regset *src;  /* registers read    */
+    regset *dest;  /* registers written */
+	/* register usage sets */
+	int *gen;
+	int *kill;
+	int *defin;
+	int *defout;
+	int *def;
+	int *use;
+	int *livein;
+	int *liveout;
+    inst_t instance;  /* a link to the instruction as scanned in */
+    struct instruction *next; /* the next instruction */
+};
+typedef struct instruction instL;
+
+/* Global Variables */
+instL *masterList;
+int MAX_REGS;
+int NUM_INSTR;
+
+/* My Function Declarations */
+void setup_arrays();
+void add_instruction(inst_t instruction, int number);
+void build_regsets(instL *inst);
+void create_regsets(instL *entry, int numops, int src_first);
+void check_op_usage(struct operand op);
+void flip_master_list();
+void print_masterList();
+
+void build_CFG();
+void calculate_regsets();
+void calculate_genset();
+void calculate_killset();
+void print_regset(int set);
+
+
+/* begin code body below */
+
+/*  build_CFG()
+ *  This function builds the control flow graph.
+ */
+void build_CFG(){
+
+}
+
+/*  calculate_regsets()
+ *  This function calls the functions that computes the reg sets
+ */
+void calculate_regsets(){
+	vbmode{ printf("Caluclating register sets:\n"); }
+
+	vbmode{ printf("  Calculating gen[]..."); }
+	calculate_genset();
+	vbmode{ printf("done.\n"); 
+			print_regset(0);
+	}
+
+	vbmode{ printf("  Calculating kill[]..."); }
+	calculate_killset();
+	vbmode{ printf("done.\n"); 
+			print_regset(1);
+	}
+
+}
+
+/*  print_regset(int set)
+ *  Args:
+ *		set:  A number to print out a particular set
+ *			case 0: gen
+ *			case 1: kill
+ *			case 2: defin
+ *			case 3: defout
+ *			case 4: def
+ *			case 5: use
+ *			case 6: livein
+ *			case 7: liveout
+ *  This function prints out one of the sets for the entire read in program.
+ */
+void print_regset(int set){
+	instL *curr = masterList;
+	int *printset, i, firstprinted;
+
+	while(curr){
+		switch(set){
+			case 0: printset = curr->gen; break;
+			case 1: printset = curr->kill; break;
+			case 2: printset = curr->defin; break;
+			case 3: printset = curr->defout; break;
+			case 4: printset = curr->def; break;
+			case 5: printset = curr->use; break;
+			case 6: printset = curr->livein; break;
+			case 7: printset = curr->liveout; break;
+			default: printf("  Invalid argument to print_regset()\n"); return;
+		}
+		printf("    %3d:  ",curr->num);
+		firstprinted = FALSE;
+		for(i = 0; i<MAX_REGS; i++){
+			if(printset[i]){
+				if(firstprinted){
+					printf(", ");
+				}
+				printf("R%d",i);
+				firstprinted = TRUE;
+			}
+		}
+		printf("\n");
+		curr = curr->next;
+	}
+}
+
+/*  calculate_genset()
+ *  This function calculates the genset for each function.
+ */ 
+void calculate_genset(){
+	instL *curr = masterList;
+
+	while(curr){
+		if(curr->dest && curr->dest->reg){
+			curr->gen[curr->dest->reg] = TRUE;
+		}	
+		curr = curr->next;		
+	}
+}
+
+/*  calculate_killset()
+ *  This function calculates the killset for each instruction.
+ */
+void calculate_killset(){
+
+/*
+for each instruction (i: op X, -, -) do
+   let b = block that contains i
+   for all blocks k in CFG do { k.passed = false }
+   kill[i] = 0
+   for each j in b (from pred[i] to top of block) do
+      if (j: op y,-,-) and x == y) then { kill[i] = {j}; break; }
+   if (kill[i] != NULL) continue; // move to next instruction 
+   for all blocks k in k->b do // for all predecessors of b
+      kill[i] = kill[i] U calc_kill(k,x)
+calc_kill(b,x) {
+   if(b.passed == true) return 0;
+   b.passed = true;
+   for each j in b (from bottom to top of block) do
+      if( (j: op y,-,-) and x==y ) then return j
+   temp_kill_set = 0
+   for each block k in k->b do
+      temp_kill_set = temp_kill_set U calc_kill(k,x)
+   return temp_kill_set
+}
+
+*/
+
+}
+
+/*  void setup_arrays()
+ *  This function creates the master list, and allocates all the needed memory for it.
+ */
+void setup_arrays(){
+	instL *curr;
+	inst_t current;
+	int number, i;
+
+	vbmode{ printf("Setting up arrays:\n"); }
+
+	masterList = NULL;
+	NUM_INSTR = 0;
+	MAX_REGS = 0;
+
+	vbmode{ printf("  Building master array..."); }
+	current = instList;
+	number = 0;
+	while(current){
+		add_instruction(current,number);
+		current=current->next;
+		number++;
+		NUM_INSTR++;
+	}
+
+    /* flip the list so it is in order */
+    flip_master_list();
+	vbmode{ printf("done.\n");
+			printf("  Found %d instructions using largest register: R%d.\n",NUM_INSTR,MAX_REGS-1);
+			print_masterList();
+			printf("  Allocating register sets..."); 
+	}
+
+	curr = masterList;
+
+	while(curr){
+
+		if((curr->gen = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->kill = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->defin = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->defout = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->def = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->use = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->livein = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		if((curr->liveout = (int *)malloc(MAX_REGS*sizeof(int))) == NULL){
+		    vbmode{ printf("Could not allocate memory!\n"); }
+		}
+		curr = curr->next;
+	}
+
+	vbmode{ printf("done.\n"); 
+			printf("  Initializing register sets..."); 
+	}
+
+	curr = masterList;
+	while(curr){
+		for(i=0; i<MAX_REGS; i++){
+				curr->gen[i] = FALSE;
+				curr->kill[i] = FALSE;
+				curr->defin[i] = FALSE;
+				curr->defout[i] = FALSE;
+				curr->def[i] = FALSE;
+				curr->use[i] = FALSE;
+				curr->livein[i] = FALSE;
+				curr->liveout[i] = FALSE;			
+		}
+		curr = curr->next;
+	}
+	vbmode{ printf("done.\n"); }
+}
+
+/* void print_masterList()
+ * This function prints the ddg instruction list
+ */
+void print_masterList(){
+    instL *curr = masterList;
+    regset *currreg;
+    
+    while(curr){
+        printf("    %d.\t\tDest: ",curr->num);
+        currreg = curr->dest;
+        if(currreg == NULL){
+            printf("NA ");
+        }
+        else{
+            while(currreg){
+                printf("R%d ",currreg->reg);
+                currreg = currreg->next;
+                }
+            }
+        printf("\tSrc: ");
+        currreg = curr->src;
+        if(currreg == NULL){
+            printf("NA\t");
+        }
+        else{
+            while(currreg){
+                printf("R%d ",currreg->reg);
+                currreg = currreg->next;
+                }
+            }
+        printf("\n");
+        curr=curr->next;
+    }
+
+}
+
+/* void flip_instr_list()
+ * This function flips the ddg instruction list so it is in order 
+ */
+void flip_master_list(){
+    instL *new, *curr, *temp;
+
+    new = NULL;
+    curr = masterList;
+    while (curr != NULL) {
+        temp = curr->next;
+        LIST_ADD(curr, new);
+        curr = temp;
+    }
+    masterList = new;
+}
+
+/*  void add_instruction(inst_t instruction, int number)
+ *  Args:
+ *		instruction: the instruction to add
+ *		number:  the instruction number
+ *  This function adds instructions to the master list of instructions 
+ */
+void add_instruction(inst_t instruction, int number){
+	instL *new;
+
+    if((new = (instL *)malloc(sizeof(instL))) == NULL){
+        vbmode{ printf("Could not allocate memory!\n"); }
+    }
+
+	new->instance = instruction;
+	new->num = number;
+
+	build_regsets(new);
+
+	LIST_ADD(new,masterList);
+}
+
+void build_regsets(instL *inst){    
+	int src_first = FALSE;    
+
+    switch(inst->instance->op) {
+        /* 3 operands */
+        case OP_ADD:
+        case OP_AND:
+        case OP_ANDL:
+        case OP_DIV:
+        case OP_LDR:
+        case OP_MUL:
+        case OP_OR:
+        case OP_ORL:
+        case OP_STR:
+        case OP_SUB:
+            check_op_usage(inst->instance->ops[0]);
+            check_op_usage(inst->instance->ops[1]);
+            check_op_usage(inst->instance->ops[2]);
+            create_regsets(inst, 2, src_first);
+            break;
+        /* 2 operands */
+        case OP_BR:
+        case OP_ST:
+        case OP_STI:
+            src_first = TRUE;
+        case OP_SET:
+        case OP_LD:
+        case OP_LDI:
+        case OP_LEA:
+        case OP_NOT:
+        case OP_NOTL:
+            check_op_usage(inst->instance->ops[0]);
+            check_op_usage(inst->instance->ops[1]); 
+            create_regsets(inst, 1, src_first);
+            break;
+        /* one operand */
+        case OP_JSRR:
+        case OP_BRA:
+        case OP_JMP:
+        case OP_JSR:
+            src_first = TRUE;
+            check_op_usage(inst->instance->ops[0]); 
+            create_regsets(inst, 0, src_first);
+        default:
+            break;
+    }
+
+}
+
+/* void create_regsets(inst_t entry, int numops, int inst_num)
+ * Args:
+ *      entry: a link to the origional instruction
+ *      numops: the number of operands to consider
+ *      src_first: boolean to calculate the src reg fist
+ * This function adds items to the ddg instruction list
+ */
+void create_regsets(instL *entry, int numops, int src_first){
+    int i;
+    regset *temp;
+    enum op_type t; 
+
+    entry->src = NULL;
+    entry->dest = NULL;
+
+    for(i=numops; i>=0; i--){
+        t = entry->instance->ops[i].t;
+        if(t == op_reg){
+            if(src_first){
+                if(i == 0){
+                    temp = entry->src;
+                    if((entry->src = (regset *)malloc(sizeof(regset))) == NULL){
+                        vbmode{ printf("Could not allocate memory!\n"); }
+                    }
+                    entry->src->reg = entry->instance->ops[i].reg;
+                    entry->src->next = temp;
+                }
+                else{
+                    temp = entry->dest;
+                    if((entry->dest = (regset *)malloc(sizeof(regset))) == NULL){
+                        vbmode{ printf("Could not allocate memory!\n"); }
+                    }
+                    entry->dest->reg = entry->instance->ops[i].reg;
+                    entry->dest->next = temp;
+                }
+            }
+            else{
+                if(i == 0){
+                    temp = entry->dest;
+                    if((entry->dest = (regset *)malloc(sizeof(regset))) == NULL){
+                        vbmode{ printf("Could not allocate memory!\n"); }
+                    }
+                    entry->dest->reg = entry->instance->ops[i].reg;
+                    entry->dest->next = temp;
+                }
+                else{
+                    temp = entry->src;
+                    if((entry->src = (regset *)malloc(sizeof(regset))) == NULL){
+                        vbmode{ printf("Could not allocate memory!\n"); }
+                    }
+                    entry->src->reg = entry->instance->ops[i].reg;
+                    entry->src->next = temp;
+                }
+            }
+        }
+    }
+
+}
+
+/* void check_op_usage(struct operand op)
+ * Args:
+ *      op: the operand for the instruction
+ * This function checks if the operand is a register and then updates
+ *      the maximum register used.
+ */
+void check_op_usage(struct operand op){
+    enum op_type t =  op.t;
+    switch(t) {
+        case op_reg:
+            if( op.reg >= MAX_REGS ){
+                MAX_REGS = op.reg + 1;
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+int main(int argc, char **argv)
+{
+  if(argc < 2)
+    {
+      printf("Usage: ./opt [-v] file.asm\n");
+      return -1;
+    }
+  
+  int arg=1;
+  while( *(argv[arg]) == '-' )
+    {
+      if( *(argv[arg]+1) == 'v' )
+	{
+	  verbose = 1;
+	}
+      arg++;
+    }
+
+  if(arg>=argc)
+    {
+      printf("Usage: ./opt [-v] file.asm\n");
+      return -1;
+    }
+
+  infile = *(argv+arg);
+
+  yywrap();
+  yyparse();
+
+  if(num_errors>0)
+    return 0;
+
+  vbmode{ printf("Instructions read in:\n"); print_list(instList); }
+
+  /* 1. build liveness information*/
+
+  /* 2. perform DCE */
+
+  /* 3. use liveness information to perform register allocation  */
+
+  setup_arrays();
+  build_CFG();
+  calculate_regsets();
+
+  return 0;
+}
+
+/* append to list if not found in list*/
+instList_t instList_append(instList_t head, inst_t inst, int *found)
+{
+  instList_t tail = head;
+  instList_t new;
+
+  *found = 0;
+
+  new = (instList_t) malloc(sizeof(*head));
+  new->inst = inst;
+  new->next = NULL;
+
+  if(head == NULL)
+    return new;
+
+  if( tail->inst == inst )
+    {
+      *found = 1;  
+      return head;
+    }
+
+  while(tail && tail->next) {
+    /* so long as I never copy an instruction found during parsing, I can test equality
+       by comparing pointers */
+    /* we've already inserted this once */
+    if(tail->inst == inst) 
+      {
+	*found = 1;  
+	return head;
+      }
+    tail = tail->next;
+  }
+
+  tail->next = new;
+  return head;
+}

@@ -1,0 +1,15 @@
+;  Register allocation
+;
+;  R11   ->   R1 
+;  R12   ->   R0 
+;  R13   ->   R0 
+;  R14   ->   R0 
+;
+; Final code
+main:	SET R1,#1
+	BRa lbl
+lbl:	SET R0,#2
+	ADD R0,R1,R0
+lbl2:   MUL R0,R1,R0
+	STR R0,R5,#1
+	RET
